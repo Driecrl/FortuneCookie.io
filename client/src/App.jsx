@@ -1,8 +1,22 @@
 import { useState } from "react";
 import { resizeImage } from "./lib/imageResize.js";
+import bank from "./data/fortunes.json";
 
+const all = Object.values(bank).flat();
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+
+// Random fortune that wasn't one of the last 20 shown
+function pickFortune(recent) {
+  const fresh = all.filter((t) => !recent.includes(t));
+  const pool = fresh.length ? fresh : all;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+function luckyNumbers() {
+  const s = new Set();
+  while (s.size < 6) s.add(1 + Math.floor(Math.random() * 49));
+  return [...s].sort((a, b) => a - b);
+}
 
 export default function App() {
   const [pets, setPets] = useState(() => load("pets", []));
@@ -23,16 +37,13 @@ export default function App() {
     const next = [...pets, { id: Date.now(), ...draft }];
     setPets(next); save("pets", next); setActive(next.at(-1)); setDraft({ name: "", personality: "", image: "" });
   }
-  async function crack() {
+  function crack() {
     setError(""); setFortune(null); setOpening(true);
-    try {
-      const r = await fetch("/api/fortune", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: active.image, petName: active.name, personality: active.personality, recent }) });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.message || "Something went wrong. Try again.");
-      setFortune(data);
-      const nr = [data.fortune, ...recent].slice(0, 5); setRecent(nr); save("recent", nr);
-    } catch (e) { setError(e.message); setOpening(false); }
+    setTimeout(() => {
+      const text = pickFortune(recent);
+      setFortune({ text, numbers: luckyNumbers() });
+      const nr = [text, ...recent].slice(0, 20); setRecent(nr); save("recent", nr);
+    }, 700);
   }
   const reset = () => { setFortune(null); setOpening(false); };
 
@@ -46,8 +57,6 @@ export default function App() {
           <label className="photo">{draft.image ? <img src={draft.image} alt="Your pet" /> : <span>Add a photo of your pet</span>}
             <input type="file" accept="image/*" onChange={onFile} hidden /></label>
           <input placeholder="Pet's name" maxLength={30} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-          <input placeholder="Personality, e.g. grumpy but cuddly" maxLength={100} value={draft.personality}
-            onChange={(e) => setDraft({ ...draft, personality: e.target.value })} />
           <button onClick={addPet}>Meet my pet</button>
           {pets.length > 0 && <div className="pets">{pets.map((p) => (
             <button key={p.id} className="pet" onClick={() => { setActive(p); reset(); }}><img src={p.image} alt={p.name} />{p.name || "Pet"}</button>))}</div>}
@@ -62,10 +71,9 @@ export default function App() {
           </div>
           {fortune ? (
             <div className="slip" role="status">
-              <p className="text">{fortune.fortune}</p>
-              <p className="meta">Lucky numbers: {fortune.lucky_numbers.join(", ")}</p>
-              <p className="meta">Lucky item: {fortune.lucky_item}</p>
-              <p className="sign">{fortune.pet_sign_off}</p>
+              <p className="text">{fortune.text}</p>
+              <p className="meta">Lucky numbers: {fortune.numbers.join(", ")}</p>
+              {active.name && <p className="sign">— {active.name}</p>}
             </div>
           ) : <button onClick={crack} disabled={opening}>{opening ? "Opening…" : `Crack ${active.name ? active.name + "'s" : "the"} cookie`}</button>}
           {fortune && <button className="ghost" onClick={reset}>Another cookie</button>}
