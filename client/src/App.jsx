@@ -1,49 +1,14 @@
 import { useState, useRef } from "react";
 import { resizeImage } from "./lib/imageResize.js";
 import { makeCutout } from "./lib/cutout.js";
+import { ART, KEYS, Paw, Hammer } from "./lib/stickers.jsx";
+import { playSfx } from "./lib/sfx.js";
 import bank from "./data/fortunes.json";
 
-const all = Object.values(bank).flat();
 const goldenPool = [...bank.life, ...bank.good];
-const DAILY_LIMIT = 100;
+const DAILY_LIMIT = 5; // cookies per day (set higher while testing)
 const GOLDEN_CHANCE = 0.1;
-const EMOJIS = ["👑", "🎩", "🎓", "🕶️", "🤓", "🎀", "🧣", "🔔", "🌸", "💖", "⭐"];
 const KINDS = [["cat", "🐱 Cat"], ["dog", "🐶 Dog"], ["other", "🐾 Other"]];
-
-// Sounds: put meow.mp3, bark.mp3, pop.mp3, crack.mp3 in client/public/sounds/ to use your own.
-// If a file is missing, a simple built-in sound plays instead.
-let ctx;
-function synth(name) {
-  try {
-    ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
-    const t = ctx.currentTime, g = ctx.createGain(); g.connect(ctx.destination);
-    if (name === "crack") {
-      const buf = ctx.createBuffer(1, ctx.sampleRate * 0.14, ctx.sampleRate), d = buf.getChannelData(0);
-      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
-      const src = ctx.createBufferSource(); src.buffer = buf; src.connect(g);
-      g.gain.setValueAtTime(0.4, t); src.start(t); return;
-    }
-    const o = ctx.createOscillator(); o.connect(g);
-    if (name === "bark") {
-      o.type = "sawtooth"; o.frequency.setValueAtTime(320, t); o.frequency.exponentialRampToValueAtTime(140, t + 0.18);
-      g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.2); o.start(t); o.stop(t + 0.22);
-    } else if (name === "pop") {
-      o.type = "sine"; o.frequency.setValueAtTime(500, t); o.frequency.exponentialRampToValueAtTime(900, t + 0.08);
-      g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.12); o.start(t); o.stop(t + 0.14);
-    } else {
-      o.type = "triangle"; o.frequency.setValueAtTime(500, t); o.frequency.linearRampToValueAtTime(900, t + 0.15);
-      o.frequency.linearRampToValueAtTime(450, t + 0.5); g.gain.setValueAtTime(0.3, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.55); o.start(t); o.stop(t + 0.58);
-    }
-  } catch {}
-}
-function playSfx(name) {
-  let done = false;
-  const fall = () => { if (!done) { done = true; synth(name); } };
-  const a = new Audio(`/sounds/${name}.mp3`);
-  a.onerror = fall;
-  a.play().catch(fall);
-}
 
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
@@ -78,19 +43,22 @@ export default function App() {
   const [pets, setPets] = useState(() => load("pets", []));
   const [recent, setRecent] = useState(() => load("recent", []));
   const [usage, setUsage] = useState(() => load("usage", { day: "", count: 0 }));
+  const [mine, setMine] = useState(() => load("mystickers", []));
   const [draft, setDraft] = useState({ name: "", kind: "cat", image: "" });
   const [active, setActive] = useState(null);
   const [fortune, setFortune] = useState(null);
-  const [phase, setPhase] = useState("idle"); // idle | shake | open
+  const [phase, setPhase] = useState("idle"); // idle | swing | open
   const [selected, setSelected] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [stickerBusy, setStickerBusy] = useState(false);
   const [error, setError] = useState("");
   const stageRef = useRef(null);
   const drag = useRef(null);
 
   const used = usage.day === todayKey() ? usage.count : 0;
   const left = DAILY_LIMIT - used;
-  const stickers = active?.stickers || [];
+  const mineMap = Object.fromEntries(mine.map((m) => [m.id, m.src]));
+  const stickers = (active?.stickers || []).filter((s) => ART[s.k] || (s.k === "my" && mineMap[s.img]));
   const editing = phase === "idle" && !fortune;
   const petSound = active?.kind === "dog" ? "bark" : "meow";
 
@@ -123,11 +91,31 @@ export default function App() {
     setPets(np); save("pets", np);
   }
   function setStickers(list) { setActive({ ...active, stickers: list }); persist(list); }
-  function addSticker(e) {
-    const s = { id: Date.now(), e, x: 50, y: 20, s: 2.6 };
+  function addSticker(k, img) {
+    const a = ART[k];
+    const s = k === "my"
+      ? { id: Date.now(), k, img, x: 50, y: 40, w: 4, r: 0 }
+      : { id: Date.now(), k, x: a.x, y: a.y, w: a.w, r: 0 };
     setStickers([...stickers, s]); setSelected(s.id); playSfx("pop");
   }
-  function resize(d) { setStickers(stickers.map((s) => (s.id === selected ? { ...s, s: clamp(s.s + d, 1.2, 6) } : s))); }
+  async function addMine(e) {
+    const f = e.target.files?.[0]; e.target.value = ""; if (!f) return;
+    if (mine.length >= 12) return setError("You can keep up to 12 of your own stickers. Remove one to add another.");
+    setStickerBusy(true); setError("");
+    try {
+      const src = await makeCutout(f, 400);
+      const next = [...mine, { id: Date.now(), src }];
+      setMine(next); save("mystickers", next);
+      addSticker("my", next.at(-1).id);
+    } catch { setError("Couldn't make a sticker from that image. Try a clearer picture."); }
+    setStickerBusy(false);
+  }
+  function removeMine(id) {
+    const next = mine.filter((m) => m.id !== id);
+    setMine(next); save("mystickers", next);
+  }
+  function resize(d) { setStickers(stickers.map((s) => (s.id === selected ? { ...s, w: clamp(s.w + d * 1.5, 1.5, 9) } : s))); }
+  function rotate(d) { setStickers(stickers.map((s) => (s.id === selected ? { ...s, r: (s.r || 0) + d } : s))); }
   function removeSticker() { setStickers(stickers.filter((s) => s.id !== selected)); setSelected(null); }
   function down(e, id) {
     if (!editing) return;
@@ -145,16 +133,20 @@ export default function App() {
   // ---- the cookie ----
   function crack() {
     if (left <= 0 || phase !== "idle") return;
-    setSelected(null); setError(""); setFortune(null); setPhase("shake");
+    setSelected(null); setError(""); setFortune(null); setPhase("swing"); playSfx(petSound); setTimeout(() => playSfx("whoosh"), 420);
     const u = { day: todayKey(), count: used + 1 };
     setUsage(u); save("usage", u);
     setTimeout(() => {
       const golden = Math.random() < GOLDEN_CHANCE;
-      const text = pick(golden ? goldenPool : all, recent);
-      setFortune({ kind: golden ? "golden" : "normal", text, numbers: luckyNumbers() });
+      const themed = stickers.filter((s) => ART[s.k]); // your own stickers don't change the fortune
+      const worn = themed.length && Math.random() < 0.7 ? themed[Math.floor(Math.random() * themed.length)] : null;
+      const base = Object.entries(bank).filter(([k]) => (k !== "cat" && k !== "dog") || k === active.kind).flatMap(([, v]) => v);
+      const pool = golden ? goldenPool : worn ? ART[worn.k].themes.flatMap((k) => bank[k]) : base;
+      const text = pick(pool, recent);
+      setFortune({ kind: golden ? "golden" : "normal", text, numbers: luckyNumbers(), outfit: !golden && worn ? ART[worn.k].tag : null });
       const nr = [text, ...recent].slice(0, 20); setRecent(nr); save("recent", nr);
-      setPhase("open"); playSfx("crack");
-    }, 800);
+      setPhase("open"); playSfx("crack"); setTimeout(() => playSfx(golden ? "chime" : "paper"), 260);
+    }, 700);
   }
   const reset = () => { setFortune(null); setPhase("idle"); };
 
@@ -192,33 +184,62 @@ export default function App() {
 
       {active && (
         <section className="panel center">
-          <div className={"stage" + (editing ? " editing" : "")} ref={stageRef} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+          <div className={"stage" + (editing ? " editing" : "") + (phase === "open" ? " hit" : "") + " kind-" + (active.kind || "cat")} ref={stageRef} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
             <div className={"frame" + (active.cutout ? " cut" : "")} onClick={() => playSfx(petSound)}>
               <img className="avatar" src={active.image} alt={active.name} />
             </div>
-            {stickers.map((s) => (
-              <span key={s.id} className={"stk" + (editing && selected === s.id ? " sel" : "") + (editing ? "" : " fixed")}
-                style={{ left: s.x + "%", top: s.y + "%", fontSize: s.s + "rem" }}
-                onPointerDown={(e) => down(e, s.id)} aria-hidden="true">{s.e}</span>
-            ))}
-            <button className="cookie-btn" onClick={crack} disabled={phase !== "idle" || left <= 0} aria-label="Crack the cookie">
-              <div className={"cookie" + (phase === "idle" && left > 0 ? " idle" : "") + (phase === "shake" ? " shaking" : "") + (phase === "open" ? " open" : "") + (fortune?.kind === "golden" ? " golden" : "")}>
+            {stickers.map((s) => {
+              const props = {
+                className: "stk" + (editing && selected === s.id ? " sel" : "") + (editing ? "" : " fixed"),
+                style: { left: s.x + "%", top: s.y + "%", width: s.w + "rem", transform: `translate(-50%,-50%) rotate(${s.r || 0}deg)` },
+                onPointerDown: (e) => down(e, s.id),
+              };
+              return s.k === "my"
+                ? <img key={s.id} {...props} src={mineMap[s.img]} alt="" draggable={false} />
+                : <svg key={s.id} {...props} viewBox={ART[s.k].vb} aria-hidden="true">{ART[s.k].art}</svg>;
+            })}
+            <button className={"cookie-btn" + (phase === "open" ? " open" : "")} onClick={crack} disabled={phase !== "idle" || left <= 0} aria-label="Crack the cookie">
+              <div className={"cookie" + (phase === "idle" && left > 0 ? " idle" : "") + (phase === "swing" ? " swinging" : "") + (phase === "open" ? " open" : "") + (fortune?.kind === "golden" ? " golden" : "")}>
                 <span className="half l"><CookieSvg /></span><span className="half r"><CookieSvg /></span>
                 {phase === "open" && <span className="paper" />}
                 {phase === "open" && sparks.map((s, i) => <span key={i} className="spark" style={{ "--x": s.x + "px", "--y": s.y + "px" }}>✨</span>)}
               </div>
+              <span className="paw l"><Paw /></span><span className="paw r"><Paw /></span>
+              {phase !== "idle" && <Hammer />}
+              {phase === "swing" && <span className="say" aria-hidden="true">{active.kind === "dog" ? "Woof!" : active.kind === "other" ? "Squeak!" : "Meow!"}</span>}
+              {phase === "open" && <span className="pow" aria-hidden="true">POW!</span>}
             </button>
           </div>
 
           {editing && (
             <>
               <div className="tray" role="group" aria-label="Stickers">
-                {EMOJIS.map((e) => <button key={e} onClick={() => addSticker(e)} aria-label={`Add ${e}`}>{e}</button>)}
+                {KEYS.map((k) => (
+                  <button key={k} onClick={() => addSticker(k)} aria-label={`Add ${ART[k].label}`}>
+                    <svg viewBox={ART[k].vb} width="40" height="28">{ART[k].art}</svg>
+                  </button>
+                ))}
+              </div>
+              <div className="tray mine" role="group" aria-label="My stickers">
+                {mine.map((m) => (
+                  <span key={m.id} className="pet-wrap">
+                    <button onClick={() => addSticker("my", m.id)} aria-label="Add my sticker">
+                      <img src={m.src} alt="" width="34" height="34" style={{ objectFit: "contain" }} />
+                    </button>
+                    <button className="x" aria-label="Delete this sticker" onClick={() => removeMine(m.id)}>✕</button>
+                  </span>
+                ))}
+                <label className="upload-sticker">
+                  {stickerBusy ? "Making your sticker… ⏳" : "＋ Add my own"}
+                  <input type="file" accept="image/*" hidden onChange={addMine} disabled={stickerBusy} />
+                </label>
               </div>
               {selected ? (
                 <div className="ctl">
                   <button onClick={() => resize(-0.4)} aria-label="Smaller">➖</button>
                   <button onClick={() => resize(0.4)} aria-label="Bigger">➕</button>
+                  <button onClick={() => rotate(-15)} aria-label="Rotate left">↺</button>
+                  <button onClick={() => rotate(15)} aria-label="Rotate right">↻</button>
                   <button onClick={removeSticker} aria-label="Remove sticker">🗑</button>
                 </div>
               ) : <p className="meta">Add stickers, then drag them onto {active.name || "your pet"}.</p>}
@@ -230,6 +251,7 @@ export default function App() {
           {fortune && (
             <div className={"slip" + (fortune.kind === "golden" ? " golden" : "")} role="status">
               {fortune.kind === "golden" && <p className="badge">✨ Golden cookie</p>}
+              {fortune.outfit && <p className="badge">🎀 {fortune.outfit} outfit fortune</p>}
               <p className="text">{fortune.text}</p>
               <p className="meta">Lucky numbers: {fortune.numbers.join(", ")}</p>
               {active.name && <p className="sign">— {active.name}</p>}
