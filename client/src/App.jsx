@@ -10,6 +10,19 @@ const DAILY_LIMIT = 5; // cookies per day (set higher while testing)
 const GOLDEN_CHANCE = 0.1;
 const KINDS = [["cat", "🐱 Cat"], ["dog", "🐶 Dog"], ["other", "🐾 Other"]];
 
+// soft floating details in the background
+const drift = Array.from({ length: 16 }, (_, i) => ({
+  left: (i * 37) % 100, size: 0.8 + ((i * 7) % 10) / 10, delay: -((i * 3.1) % 18), dur: 14 + (i % 6) * 3,
+  e: ["🐾", "✨", "⭐", "🥠", "🐟", "🦴"][i % 6],
+}));
+
+// an animal that peeks in beside the big fortune message
+function Side({ pet, cls }) {
+  return pet.cutout
+    ? <img className={"side " + cls} src={pet.image} alt="" />
+    : <span className={"side emoji " + cls} aria-hidden="true">{pet.kind === "dog" ? "🐶" : pet.kind === "other" ? "🐾" : "🐱"}</span>;
+}
+
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 const todayKey = () => new Date().toLocaleDateString("en-CA");
@@ -61,6 +74,7 @@ export default function App() {
   const stickers = (active?.stickers || []).filter((s) => ART[s.k] || (s.k === "my" && mineMap[s.img]));
   const editing = phase === "idle" && !fortune;
   const petSound = active?.kind === "dog" ? "bark" : "meow";
+  const partner = pets.find((p) => p.id !== active?.id && p.cutout) || active; // the other animal beside the message
 
   async function onFile(e) {
     const f = e.target.files?.[0]; if (!f) return;
@@ -152,6 +166,9 @@ export default function App() {
 
   return (
     <main className="wrap">
+      <div className="drift" aria-hidden="true">
+        {drift.map((d, i) => <span key={i} style={{ left: d.left + "%", fontSize: d.size + "rem", animationDelay: d.delay + "s", animationDuration: d.dur + "s" }}>{d.e}</span>)}
+      </div>
       <h1>Pet Fortune Cookie</h1>
       <p className="sub">Your pet has something to tell you.</p>
 
@@ -249,12 +266,23 @@ export default function App() {
           )}
 
           {fortune && (
-            <div className={"slip" + (fortune.kind === "golden" ? " golden" : "")} role="status">
-              {fortune.kind === "golden" && <p className="badge">✨ Golden cookie</p>}
-              {fortune.outfit && <p className="badge">🎀 {fortune.outfit} outfit fortune</p>}
-              <p className="text">{fortune.text}</p>
-              <p className="meta">Lucky numbers: {fortune.numbers.join(", ")}</p>
-              {active.name && <p className="sign">— {active.name}</p>}
+            <div className="reveal" role="dialog" aria-label="Your fortune">
+              <div className="reveal-row">
+                <Side pet={active} cls="l" />
+                <div className={"big" + (fortune.kind === "golden" ? " golden" : "")} role="status">
+                  {fortune.kind === "golden" && <p className="badge">✨ Golden cookie</p>}
+                  {fortune.outfit && <p className="badge">🎀 {fortune.outfit} outfit fortune</p>}
+                  <p className="text">{fortune.text}</p>
+                  <p className="meta">Lucky numbers: {fortune.numbers.join(", ")}</p>
+                  {active.name && <p className="sign">— {active.name}</p>}
+                </div>
+                <Side pet={partner} cls="r" />
+              </div>
+              <div className="reveal-actions">
+                {left > 0 ? <button onClick={reset}>Another cookie</button>
+                  : <p className="limit">That's enough cookies for today. Come back tomorrow 🐾</p>}
+                <button className="ghost" onClick={() => { setActive(null); setSelected(null); reset(); }}>Choose another pet</button>
+              </div>
             </div>
           )}
           {fortune && (left > 0 ? <button className="ghost" onClick={reset}>Another cookie</button>
