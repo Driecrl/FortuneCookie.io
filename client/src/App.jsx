@@ -3,10 +3,11 @@ import { resizeImage } from "./lib/imageResize.js";
 import { makeCutout } from "./lib/cutout.js";
 import { ART, KEYS, Paw, Hammer } from "./lib/stickers.jsx";
 import { playSfx } from "./lib/sfx.js";
+import { moodFor } from "./lib/mood.js";
 import bank from "./data/fortunes.json";
 
 const goldenPool = [...bank.life, ...bank.good];
-const DAILY_LIMIT = 5; // cookies per day (set higher while testing)
+const DAILY_LIMIT = 100; // cookies per day (set higher while testing)
 const GOLDEN_CHANCE = 0.1;
 const KINDS = [["cat", "🐱 Cat"], ["dog", "🐶 Dog"], ["other", "🐾 Other"]];
 
@@ -157,7 +158,7 @@ export default function App() {
       const base = Object.entries(bank).filter(([k]) => (k !== "cat" && k !== "dog") || k === active.kind).flatMap(([, v]) => v);
       const pool = golden ? goldenPool : worn ? ART[worn.k].themes.flatMap((k) => bank[k]) : base;
       const text = pick(pool, recent);
-      setFortune({ kind: golden ? "golden" : "normal", text, numbers: luckyNumbers(), outfit: !golden && worn ? ART[worn.k].tag : null });
+      setFortune({ kind: golden ? "golden" : "normal", text, numbers: luckyNumbers(), outfit: !golden && worn ? ART[worn.k].tag : null, mood: moodFor(text, golden) });
       const nr = [text, ...recent].slice(0, 20); setRecent(nr); save("recent", nr);
       setPhase("open"); playSfx("crack"); setTimeout(() => playSfx(golden ? "chime" : "paper"), 260);
     }, 700);
@@ -269,7 +270,8 @@ export default function App() {
             <div className="reveal" role="dialog" aria-label="Your fortune">
               <div className="reveal-row">
                 <Side pet={active} cls="l" />
-                <div className={"big" + (fortune.kind === "golden" ? " golden" : "")} role="status">
+                <div className={"big" + (fortune.kind === "golden" ? " golden" : "") + (fortune.mood ? " has-mood" : "")} role="status">
+                  {fortune.mood && <img className="mood" src={fortune.mood} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} />}
                   {fortune.kind === "golden" && <p className="badge">✨ Golden cookie</p>}
                   {fortune.outfit && <p className="badge">🎀 {fortune.outfit} outfit fortune</p>}
                   <p className="text">{fortune.text}</p>
